@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template_string, send_from_directory, Response
+from flask import Flask, request, jsonify, Response, render_template_string
 from flask_cors import CORS
 import base64
 import hashlib
@@ -13,12 +13,16 @@ from datetime import datetime, timedelta
 import requests
 import re
 from urllib.parse import urljoin, urlparse, quote_plus, unquote_plus
+import traceback
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure detailed logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Configuration
@@ -125,51 +129,235 @@ def rate_limit_check(ip: str, limit: int = 10, window: int = 60) -> bool:
     request_cache[ip].append(now)
     return True
 
-def fetch_with_headers(url: str, headers: dict = None) -> requests.Response:
-    """Fetch URL with proper headers and error handling"""
-    if headers is None:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'cross-site'
-        }
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=30, verify=True)
-        response.raise_for_status()
-        return response
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to fetch {url}: {str(e)}")
-        raise
-
 @app.route('/')
 def index():
-    """Serve the main HTML page"""
-    # In production, serve from static files
-    with open('sreaty_tv.html', 'r', encoding='utf-8') as f:
-        html_content = f.read()
-    return html_content
+    """Serve a simple test page with debugging info"""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Sreaty TV Debug</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+            .container { background: white; padding: 30px; border-radius: 10px; max-width: 800px; }
+            h1 { color: #333; }
+            .form-group { margin: 20px 0; }
+            input, button { padding: 10px; margin: 5px; border: 1px solid #ddd; border-radius: 5px; }
+            input[type="text"] { width: 500px; }
+            button { background: #007bff; color: white; cursor: pointer; }
+            .result { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; word-break: break-all; }
+            .error { background: #f8d7da; color: #721c24; }
+            .debug { background: #e2e3e5; color: #383d41; font-family: monospace; font-size: 12px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔧 Sreaty TV Debug Panel</h1>
+            
+            <div class="form-group">
+                <h3>1. Test Direct M3U8 URL</h3>
+                <input type="text" id="directUrl" placeholder="Enter M3U8 URL to test directly">
+                <button onclick="testDirect()">Test Direct</button>
+            </div>
+            
+            <div class="form-group">
+                <h3>2. Test Through Proxy</h3>
+                <input type="text" id="proxyUrl" placeholder="Enter M3U8 URL to test through proxy">
+                <button onclick="testProxy()">Test Proxy</button>
+            </div>
+            
+            <div class="form-group">
+                <h3>3. Encrypt Link</h3>
+                <input type="text" id="encryptUrl" placeholder="Enter M3U8 URL to encrypt">
+                <button onclick="encryptTest()">Encrypt</button>
+            </div>
+            
+            <div class="form-group">
+                <h3>4. Test Full Flow</h3>
+                <input type="text" id="fullTestUrl" placeholder="Enter M3U8 URL for full test">
+                <button onclick="fullTest()">Full Test</button>
+            </div>
+            
+            <div id="result"></div>
+        </div>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.10/hls.min.js"></script>
+        <script>
+            function showResult(content, isError = false) {
+                const resultDiv = document.getElementById('result');
+                resultDiv.innerHTML = `<div class="result ${isError ? 'error' : ''}">${content}</div>`;
+            }
+            
+            function showDebug(content) {
+                const resultDiv = document.getElementById('result');
+                resultDiv.innerHTML += `<div class="result debug">${content}</div>`;
+            }
+
+            async function testDirect() {
+                const url = document.getElementById('directUrl').value.trim();
+                if (!url) return;
+                
+                showResult('Testing direct M3U8 access...');
+                
+                try {
+                    const response = await fetch(url, { method: 'GET' });
+                    showDebug(`Direct fetch status: ${response.status}`);
+                    
+                    if (response.ok) {
+                        const text = await response.text();
+                        showResult(`✅ Direct access works!<br>Status: ${response.status}<br>Content preview: ${text.substring(0, 200)}...`);
+                    } else {
+                        showResult(`❌ Direct access failed: ${response.status} ${response.statusText}`, true);
+                    }
+                } catch (error) {
+                    showResult(`❌ Direct access error: ${error.message}`, true);
+                }
+            }
+
+            async function testProxy() {
+                const url = document.getElementById('proxyUrl').value.trim();
+                if (!url) return;
+                
+                showResult('Testing proxy access...');
+                
+                try {
+                    const proxyUrl = `/proxy?url=${encodeURIComponent(url)}`;
+                    showDebug(`Proxy URL: ${proxyUrl}`);
+                    
+                    const response = await fetch(proxyUrl);
+                    showDebug(`Proxy fetch status: ${response.status}`);
+                    
+                    if (response.ok) {
+                        const text = await response.text();
+                        showResult(`✅ Proxy access works!<br>Status: ${response.status}<br>Content preview: ${text.substring(0, 200)}...`);
+                    } else {
+                        const errorText = await response.text();
+                        showResult(`❌ Proxy access failed: ${response.status}<br>Error: ${errorText}`, true);
+                    }
+                } catch (error) {
+                    showResult(`❌ Proxy access error: ${error.message}`, true);
+                }
+            }
+
+            async function encryptTest() {
+                const url = document.getElementById('encryptUrl').value.trim();
+                if (!url) return;
+                
+                try {
+                    const response = await fetch('/api/encrypt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ original_link: url })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        showResult(`✅ Encryption successful!<br>Encrypted: ${data.encrypted_link}`);
+                    } else {
+                        showResult(`❌ Encryption failed: ${data.error}`, true);
+                    }
+                } catch (error) {
+                    showResult(`❌ Encryption error: ${error.message}`, true);
+                }
+            }
+
+            async function fullTest() {
+                const url = document.getElementById('fullTestUrl').value.trim();
+                if (!url) return;
+                
+                showResult('Starting full test flow...');
+                
+                try {
+                    // Step 1: Encrypt
+                    showDebug('Step 1: Encrypting URL...');
+                    const encryptResponse = await fetch('/api/encrypt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ original_link: url })
+                    });
+                    
+                    const encryptData = await encryptResponse.json();
+                    if (!encryptData.success) {
+                        throw new Error(`Encryption failed: ${encryptData.error}`);
+                    }
+                    
+                    showDebug(`Encrypted link: ${encryptData.encrypted_link.substring(0, 50)}...`);
+                    
+                    // Step 2: Decrypt to get proxy URL
+                    showDebug('Step 2: Decrypting to get proxy URL...');
+                    const decryptResponse = await fetch('/api/decrypt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ encrypted_link: encryptData.encrypted_link })
+                    });
+                    
+                    const decryptData = await decryptResponse.json();
+                    if (!decryptData.success) {
+                        throw new Error(`Decryption failed: ${decryptData.error}`);
+                    }
+                    
+                    showDebug(`Proxy URL: ${decryptData.decrypted_link}`);
+                    
+                    // Step 3: Test HLS.js with proxy URL
+                    showDebug('Step 3: Testing with HLS.js...');
+                    
+                    if (Hls.isSupported()) {
+                        const hls = new Hls({
+                            debug: true,
+                            enableWorker: false
+                        });
+                        
+                        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                            showResult('✅ Full test successful! HLS manifest loaded.', false);
+                            hls.destroy();
+                        });
+                        
+                        hls.on(Hls.Events.ERROR, function(event, data) {
+                            showResult(`❌ HLS Error: ${data.type} - ${data.details}`, true);
+                            hls.destroy();
+                        });
+                        
+                        hls.loadSource(decryptData.decrypted_link);
+                    } else {
+                        showResult('❌ HLS.js not supported in this browser', true);
+                    }
+                    
+                } catch (error) {
+                    showResult(`❌ Full test error: ${error.message}`, true);
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
+    return html
 
 @app.route('/api/encrypt', methods=['POST'])
 def encrypt_link():
     """Admin endpoint to encrypt M3U8 links"""
     try:
+        logger.info("=== ENCRYPT REQUEST ===")
+        logger.info(f"Request headers: {dict(request.headers)}")
+        logger.info(f"Request data: {request.get_data()}")
+        
         # Rate limiting
         client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
-        if not rate_limit_check(client_ip, limit=5, window=60):
+        logger.info(f"Client IP: {client_ip}")
+        
+        if not rate_limit_check(client_ip, limit=10, window=60):
             return jsonify({'error': 'Rate limit exceeded'}), 429
         
         data = request.get_json()
+        logger.info(f"Parsed JSON: {data}")
         
         if not data or 'original_link' not in data:
             return jsonify({'error': 'Missing original_link parameter'}), 400
         
         original_link = data['original_link'].strip()
+        logger.info(f"Original link: {original_link}")
         
         # Validate M3U8 link format
         if not original_link.startswith(('http://', 'https://')):
@@ -180,29 +368,37 @@ def encrypt_link():
         
         # Encrypt the link
         encrypted_link = encryption_handler.encrypt_link(original_link)
+        logger.info(f"Encrypted link generated: {encrypted_link[:50]}...")
         
-        logger.info(f"Link encrypted for IP: {client_ip}")
-        
-        return jsonify({
+        result = {
             'success': True,
             'encrypted_link': encrypted_link,
             'expires_in_hours': 24
-        })
+        }
+        logger.info(f"Returning: {result}")
+        return jsonify(result)
         
     except Exception as e:
         logger.error(f"Encryption API error: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': 'Encryption failed'}), 500
 
 @app.route('/api/decrypt', methods=['POST'])
 def decrypt_link():
     """Decrypt M3U8 links and return proxy URL"""
     try:
+        logger.info("=== DECRYPT REQUEST ===")
+        logger.info(f"Request headers: {dict(request.headers)}")
+        
         # Rate limiting
         client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+        logger.info(f"Client IP: {client_ip}")
+        
         if not rate_limit_check(client_ip, limit=20, window=60):
             return jsonify({'error': 'Rate limit exceeded'}), 429
         
         data = request.get_json()
+        logger.info(f"Decrypt request data: {data}")
         
         if not data or 'encrypted_link' not in data:
             return jsonify({'error': 'Missing encrypted_link parameter'}), 400
@@ -212,64 +408,119 @@ def decrypt_link():
         
         # Decrypt the link
         original_link = encryption_handler.decrypt_link(encrypted_link)
+        logger.info(f"Decrypted original link: {original_link}")
         
         # Return proxy URL instead of original link
         proxy_base = request.url_root.rstrip('/')
         encoded_link = quote_plus(original_link)
         proxy_url = f"{proxy_base}/proxy?url={encoded_link}"
         
-        logger.info(f"Link decrypted for IP: {client_ip}, Quality: {quality}")
+        logger.info(f"Generated proxy URL: {proxy_url}")
         
-        return jsonify({
+        result = {
             'success': True,
             'decrypted_link': proxy_url,
             'quality': quality
-        })
+        }
+        logger.info(f"Returning decrypt result: {result}")
+        return jsonify(result)
         
     except ValueError as e:
+        logger.error(f"Decryption validation error: {str(e)}")
         return jsonify({'error': str(e)}), 400
     except Exception as e:
         logger.error(f"Decryption API error: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': 'Decryption failed'}), 500
 
-@app.route('/proxy', methods=['GET'])
+@app.route('/proxy', methods=['GET', 'OPTIONS'])
 def proxy():
     """
-    Proxy M3U8 files and video segments with proper CORS headers
-    Based on proven working implementations
+    Proxy M3U8 files and video segments with detailed logging
     """
     try:
+        logger.info("=== PROXY REQUEST ===")
+        logger.info(f"Method: {request.method}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Args: {dict(request.args)}")
+        logger.info(f"Remote addr: {request.remote_addr}")
+        logger.info(f"URL root: {request.url_root}")
+        
+        if request.method == 'OPTIONS':
+            logger.info("Handling OPTIONS preflight request")
+            response = Response()
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            response.headers.add('Access-Control-Allow-Headers', "*")
+            response.headers.add('Access-Control-Allow-Methods', "*")
+            return response
+        
         url = unquote_plus(request.args.get('url', ''))
+        logger.info(f"Proxy URL parameter: {url}")
+        
         if not url:
+            logger.error("No URL parameter provided")
             return jsonify({'error': 'URL parameter is required'}), 400
         
-        # Fetch the content
-        response = fetch_with_headers(url)
+        # Test if we can reach the URL
+        logger.info(f"Attempting to fetch: {url}")
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive'
+        }
+        
+        logger.info(f"Using headers: {headers}")
+        
+        response = requests.get(url, headers=headers, timeout=30, verify=True)
+        logger.info(f"Response status: {response.status_code}")
+        logger.info(f"Response headers: {dict(response.headers)}")
+        logger.info(f"Content length: {len(response.content)} bytes")
+        logger.info(f"Content preview: {response.content[:100]}")
+        
+        response.raise_for_status()
         
         # Check if it's an M3U8 file
-        if response.content.startswith(b"#EXTM3U") or url.endswith('.m3u8'):
+        is_m3u8 = (response.content.startswith(b"#EXTM3U") or 
+                   url.endswith('.m3u8') or 
+                   'application/vnd.apple.mpegurl' in response.headers.get('content-type', ''))
+        
+        logger.info(f"Is M3U8: {is_m3u8}")
+        
+        if is_m3u8:
             # Process M3U8 content
+            logger.info("Processing M3U8 content")
             m3u8_content = response.text.splitlines(keepends=False)
             proxy_base = f"{request.url_root.rstrip('/')}/proxy"
             
+            logger.info(f"Original M3U8 lines: {len(m3u8_content)}")
+            logger.info(f"First few lines: {m3u8_content[:5]}")
+            
             # Convert relative URLs to absolute, then to proxy URLs
             processed_lines = []
-            for line in m3u8_content:
+            for line_num, line in enumerate(m3u8_content):
                 line = line.strip()
                 if line and not line.startswith('#'):
                     # This is a URL line (segment or sub-playlist)
+                    logger.info(f"Processing URL line {line_num}: {line}")
+                    
                     if not line.startswith('http'):
                         # Relative URL, make it absolute
                         absolute_url = urljoin(url, line)
+                        logger.info(f"Made absolute: {absolute_url}")
                     else:
                         absolute_url = line
                     
                     # Create proxy URL
                     proxy_url = f"{proxy_base}?url={quote_plus(absolute_url)}"
+                    logger.info(f"Created proxy URL: {proxy_url}")
                     processed_lines.append(proxy_url)
                 else:
                     # Handle EXT-X-KEY URIs in the line itself
                     if 'URI="' in line:
+                        logger.info(f"Processing EXT-X-KEY line: {line}")
                         # Extract and replace URI in EXT-X-KEY lines
                         uri_match = re.search(r'URI="([^"]*)"', line)
                         if uri_match:
@@ -280,28 +531,38 @@ def proxy():
                                 absolute_uri = original_uri
                             proxy_uri = f"{proxy_base}?url={quote_plus(absolute_uri)}"
                             line = line.replace(f'URI="{original_uri}"', f'URI="{proxy_uri}"')
+                            logger.info(f"Updated EXT-X-KEY line: {line}")
                     
                     processed_lines.append(line)
             
             # Create response with proper M3U8 headers
             response_content = '\n'.join(processed_lines)
+            logger.info(f"Final M3U8 content length: {len(response_content)}")
+            logger.info(f"Final M3U8 preview: {response_content[:200]}")
+            
             resp = Response(
                 response_content,
-                mimetype='application/vnd.apple.mpegurl',
-                headers={
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token, Range',
-                    'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Date, Server',
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache',
-                    'Expires': '0'
-                }
+                mimetype='application/vnd.apple.mpegurl'
             )
+            
+            # Add comprehensive CORS headers
+            resp.headers.update({
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers': 'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token, Range',
+                'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Date, Server',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            })
+            
+            logger.info(f"Returning M3U8 response with headers: {dict(resp.headers)}")
             return resp
         
         else:
             # Handle video segments (TS files) and other content
+            logger.info("Processing non-M3U8 content (likely video segment)")
+            
             content_type = response.headers.get('content-type', 'application/octet-stream')
             
             # Set appropriate content type for video segments
@@ -310,150 +571,53 @@ def proxy():
             elif url.endswith('.m4s'):
                 content_type = 'video/mp4'
             
+            logger.info(f"Using content type: {content_type}")
+            
             resp = Response(
                 response.content,
-                mimetype=content_type,
-                headers={
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token, Range',
-                    'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Date, Server, Accept-Ranges',
-                    'Cache-Control': 'public, max-age=3600',
-                    'Accept-Ranges': 'bytes'
-                }
+                mimetype=content_type
             )
+            
+            resp.headers.update({
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers': 'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token, Range',
+                'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Date, Server, Accept-Ranges',
+                'Cache-Control': 'public, max-age=3600',
+                'Accept-Ranges': 'bytes'
+            })
+            
+            logger.info("Returning video segment response")
             return resp
         
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error for URL {url}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({'error': f'Failed to fetch URL: {str(e)}'}), 500
     except Exception as e:
         logger.error(f"Proxy error for URL {url}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': f'Proxy failed: {str(e)}'}), 500
 
 @app.route('/api/health')
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with debug info"""
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'service': 'Sreaty TV Backend'
+        'service': 'Sreaty TV Debug Backend',
+        'environment': {
+            'PORT': os.environ.get('PORT', 'Not set'),
+            'RAILWAY_PORT': os.environ.get('RAILWAY_PORT', 'Not set'),
+            'RAILWAY_PUBLIC_DOMAIN': os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'Not set')
+        }
     })
 
-@app.route('/admin')
-def admin_panel():
-    """Admin panel for link management"""
-    admin_html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Sreaty TV - Admin Panel</title>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            body { 
-                font-family: Arial, sans-serif; 
-                max-width: 800px; 
-                margin: 0 auto; 
-                padding: 20px;
-                background: #f5f5f5;
-            }
-            .container {
-                background: white;
-                padding: 30px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            h1 { color: #333; }
-            .form-group { margin-bottom: 20px; }
-            label { display: block; margin-bottom: 5px; font-weight: bold; }
-            input[type="text"], textarea { 
-                width: 100%; 
-                padding: 10px; 
-                border: 1px solid #ddd; 
-                border-radius: 5px;
-                font-size: 16px;
-            }
-            button { 
-                background: #007bff; 
-                color: white; 
-                padding: 12px 24px; 
-                border: none; 
-                border-radius: 5px; 
-                cursor: pointer;
-                font-size: 16px;
-            }
-            button:hover { background: #0056b3; }
-            .result { 
-                margin-top: 20px; 
-                padding: 15px; 
-                background: #f8f9fa; 
-                border-radius: 5px; 
-                border-left: 4px solid #007bff;
-            }
-            .error { border-left-color: #dc3545; background: #f8d7da; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🔐 Sreaty TV Admin Panel</h1>
-            
-            <div class="form-group">
-                <label for="originalLink">M3U8 Stream Link:</label>
-                <input type="text" id="originalLink" placeholder="https://example.com/stream.m3u8">
-            </div>
-            
-            <button onclick="encryptLink()">Encrypt Link</button>
-            
-            <div id="result"></div>
-        </div>
-
-        <script>
-            async function encryptLink() {
-                const link = document.getElementById('originalLink').value.trim();
-                const resultDiv = document.getElementById('result');
-                
-                if (!link) {
-                    resultDiv.innerHTML = '<div class="result error">Please enter a valid M3U8 link</div>';
-                    return;
-                }
-                
-                try {
-                    const response = await fetch('/api/encrypt', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ original_link: link })
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (data.success) {
-                        resultDiv.innerHTML = `
-                            <div class="result">
-                                <h3>✅ Link Encrypted Successfully!</h3>
-                                <p><strong>Encrypted Link:</strong></p>
-                                <textarea readonly style="height: 100px;">${data.encrypted_link}</textarea>
-                                <p><small>⏰ Expires in ${data.expires_in_hours} hours</small></p>
-                            </div>
-                        `;
-                    } else {
-                        resultDiv.innerHTML = `<div class="result error">❌ ${data.error}</div>`;
-                    }
-                } catch (error) {
-                    resultDiv.innerHTML = `<div class="result error">❌ Network error: ${error.message}</div>`;
-                }
-            }
-            
-            document.getElementById('originalLink').addEventListener('keyup', function(e) {
-                if (e.key === 'Enter') encryptLink();
-            });
-        </script>
-    </body>
-    </html>
-    """
-    return admin_html
-
-# Handle preflight OPTIONS requests
+# Handle preflight OPTIONS requests globally
 @app.before_request
 def handle_preflight():
     if request.method == "OPTIONS":
+        logger.info(f"Global OPTIONS handler for: {request.url}")
         response = Response()
         response.headers.add("Access-Control-Allow-Origin", "*")
         response.headers.add('Access-Control-Allow-Headers', "*")
@@ -473,589 +637,23 @@ def apply_cors_headers(response):
 
 @app.errorhandler(404)
 def not_found(error):
+    logger.error(f"404 error for: {request.url}")
     return jsonify({'error': 'Endpoint not found'}), 404
 
 @app.errorhandler(500)
 def internal_error(error):
+    logger.error(f"500 error: {str(error)}")
+    logger.error(f"Traceback: {traceback.format_exc()}")
     return jsonify({'error': 'Internal server error'}), 500
 
 port = int(os.environ.get('PORT', 5000))
 
 if __name__ == '__main__':
-    # Create HTML file for serving
-    html_content = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sreaty TV - Live Streaming</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            color: #fff;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 40px;
-            padding: 20px 0;
-        }
-
-        .logo {
-            font-size: 3rem;
-            font-weight: bold;
-            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 10px;
-        }
-
-        .tagline {
-            font-size: 1.2rem;
-            opacity: 0.8;
-        }
-
-        .main-content {
-            display: grid;
-            grid-template-columns: 1fr 2fr;
-            gap: 30px;
-            margin-bottom: 30px;
-        }
-
-        .controls-panel {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 30px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-
-        .video-container {
-            background: rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            min-height: 400px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
-            color: #fff;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 12px 16px;
-            border: none;
-            border-radius: 10px;
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
-            font-size: 16px;
-            backdrop-filter: blur(5px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            transition: all 0.3s ease;
-        }
-
-        .form-control:focus {
-            outline: none;
-            background: rgba(255, 255, 255, 0.2);
-            border-color: #4ecdc4;
-            box-shadow: 0 0 20px rgba(78, 205, 196, 0.3);
-        }
-
-        .form-control::placeholder {
-            color: rgba(255, 255, 255, 0.6);
-        }
-
-        .quality-selector {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        .quality-btn {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-
-        .quality-btn:hover {
-            background: rgba(255, 255, 255, 0.2);
-            transform: translateY(-2px);
-        }
-
-        .quality-btn.active {
-            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-            box-shadow: 0 5px 15px rgba(78, 205, 196, 0.4);
-        }
-
-        .stream-btn {
-            width: 100%;
-            padding: 15px;
-            border: none;
-            border-radius: 10px;
-            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-            color: #fff;
-            font-size: 18px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin-top: 20px;
-        }
-
-        .stream-btn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 30px rgba(78, 205, 196, 0.4);
-        }
-
-        .stream-btn:active {
-            transform: translateY(-1px);
-        }
-
-        #videoPlayer {
-            width: 100%;
-            height: 100%;
-            border-radius: 15px;
-            background: #000;
-        }
-
-        .video-placeholder {
-            text-align: center;
-            color: rgba(255, 255, 255, 0.6);
-        }
-
-        .video-placeholder i {
-            font-size: 4rem;
-            margin-bottom: 20px;
-            display: block;
-        }
-
-        .admin-panel {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 30px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            margin-top: 30px;
-        }
-
-        .admin-header {
-            display: flex;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
-        .admin-toggle {
-            background: none;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            color: #fff;
-            padding: 8px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .admin-toggle:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        .admin-content {
-            display: none;
-        }
-
-        .admin-content.active {
-            display: block;
-        }
-
-        .encrypted-link {
-            background: rgba(0, 0, 0, 0.3);
-            padding: 15px;
-            border-radius: 10px;
-            margin-top: 15px;
-            word-break: break-all;
-            font-family: monospace;
-        }
-
-        .status-indicator {
-            padding: 10px;
-            border-radius: 8px;
-            margin-top: 15px;
-            font-weight: 500;
-        }
-
-        .status-success {
-            background: rgba(40, 167, 69, 0.2);
-            border: 1px solid #28a745;
-            color: #d4edda;
-        }
-
-        .status-error {
-            background: rgba(220, 53, 69, 0.2);
-            border: 1px solid #dc3545;
-            color: #f8d7da;
-        }
-
-        @media (max-width: 768px) {
-            .main-content {
-                grid-template-columns: 1fr;
-            }
-            
-            .logo {
-                font-size: 2rem;
-            }
-            
-            .quality-selector {
-                justify-content: center;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">SREATY TV</div>
-            <div class="tagline">Professional Live Streaming Platform</div>
-        </div>
-
-        <div class="main-content">
-            <div class="controls-panel">
-                <div class="form-group">
-                    <label for="streamLink">Stream Link (M3U8)</label>
-                    <input type="text" id="streamLink" class="form-control" placeholder="Enter encrypted stream link...">
-                </div>
-
-                <div class="form-group">
-                    <label>Quality Settings</label>
-                    <div class="quality-selector">
-                        <button class="quality-btn active" data-quality="auto">Auto</button>
-                        <button class="quality-btn" data-quality="1080p">1080p</button>
-                        <button class="quality-btn" data-quality="720p">720p</button>
-                        <button class="quality-btn" data-quality="480p">480p</button>
-                        <button class="quality-btn" data-quality="360p">360p</button>
-                    </div>
-                </div>
-
-                <button class="stream-btn" onclick="startStream()">
-                    🎬 Start Streaming
-                </button>
-
-                <div id="statusIndicator"></div>
-            </div>
-
-            <div class="video-container">
-                <div class="video-placeholder" id="placeholder">
-                    <span style="font-size: 4rem;">📺</span>
-                    <h3>Ready to Stream</h3>
-                    <p>Enter your encrypted link and click start streaming</p>
-                </div>
-                <video id="videoPlayer" controls style="display: none;"></video>
-            </div>
-        </div>
-
-        <div class="admin-panel">
-            <div class="admin-header">
-                <h3 style="margin-right: 20px;">Admin Panel</h3>
-                <button class="admin-toggle" onclick="toggleAdmin()">Show/Hide</button>
-            </div>
-            <div class="admin-content" id="adminContent">
-                <div class="form-group">
-                    <label for="originalLink">Original M3U8 Link</label>
-                    <input type="text" id="originalLink" class="form-control" placeholder="Enter original M3U8 link...">
-                </div>
-                <button class="stream-btn" onclick="encryptLink()">
-                    🔐 Encrypt Link
-                </button>
-                <div id="encryptedResult"></div>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.10/hls.min.js"></script>
-    <script>
-        let currentQuality = 'auto';
-        let hls = null;
-
-        function showStatus(message, isError = false) {
-            const statusDiv = document.getElementById('statusIndicator');
-            statusDiv.innerHTML = `<div class="status-indicator ${isError ? 'status-error' : 'status-success'}">${message}</div>`;
-            
-            // Auto-hide success messages after 5 seconds
-            if (!isError) {
-                setTimeout(() => {
-                    statusDiv.innerHTML = '';
-                }, 5000);
-            }
-        }
-
-        // Quality selector functionality
-        document.querySelectorAll('.quality-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                document.querySelectorAll('.quality-btn').forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                currentQuality = this.dataset.quality;
-            });
-        });
-
-        // Start streaming function
-        async function startStream() {
-            const streamLink = document.getElementById('streamLink').value.trim();
-            
-            if (!streamLink) {
-                showStatus('Please enter a stream link', true);
-                return;
-            }
-
-            showStatus('Decrypting and loading stream...');
-
-            try {
-                // Decrypt the link first
-                const proxyUrl = await decryptLink(streamLink);
-                
-                if (!proxyUrl) {
-                    showStatus('Invalid or corrupted stream link', true);
-                    return;
-                }
-
-                console.log('Using proxy URL:', proxyUrl);
-
-                const video = document.getElementById('videoPlayer');
-                const placeholder = document.getElementById('placeholder');
-                
-                // Show video player
-                placeholder.style.display = 'none';
-                video.style.display = 'block';
-
-                // Initialize HLS player
-                if (Hls.isSupported()) {
-                    if (hls) {
-                        hls.destroy();
-                    }
-                    
-                    hls = new Hls({
-                        debug: true,
-                        enableWorker: true,
-                        lowLatencyMode: false,
-                        backBufferLength: 90,
-                        maxLoadingDelay: 4,
-                        maxBufferLength: 30,
-                        maxBufferSize: 60 * 1000 * 1000,
-                        maxBufferHole: 0.5,
-                        xhrSetup: function(xhr, url) {
-                            // Add additional headers if needed
-                            console.log('Loading:', url);
-                        }
-                    });
-                    
-                    hls.loadSource(proxyUrl);
-                    hls.attachMedia(video);
-                    
-                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                        console.log('Stream loaded successfully');
-                        showStatus('Stream loaded successfully! Starting playback...');
-                        video.play().catch(e => {
-                            console.error('Play error:', e);
-                            showStatus('Autoplay blocked - click play button', false);
-                        });
-                    });
-
-                    hls.on(Hls.Events.ERROR, function(event, data) {
-                        console.error('HLS Error:', event, data);
-                        
-                        if (data.fatal) {
-                            let errorMsg = 'Unknown error occurred';
-                            
-                            switch(data.type) {
-                                case Hls.ErrorTypes.NETWORK_ERROR:
-                                    errorMsg = `Network error: ${data.details}`;
-                                    if (data.details === 'manifestLoadError') {
-                                        errorMsg += ' - The stream source may be unavailable or blocked';
-                                    }
-                                    break;
-                                case Hls.ErrorTypes.MEDIA_ERROR:
-                                    errorMsg = `Media error: ${data.details}`;
-                                    // Try to recover from media errors
-                                    hls.recoverMediaError();
-                                    return;
-                                case Hls.ErrorTypes.MUX_ERROR:
-                                    errorMsg = `Mux error: ${data.details}`;
-                                    break;
-                                default:
-                                    errorMsg = `Fatal error: ${data.details}`;
-                                    break;
-                            }
-                            
-                            showStatus(errorMsg, true);
-                        } else {
-                            console.warn('Non-fatal HLS error:', data);
-                        }
-                    });
-                    
-                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                    // Native HLS support (Safari)
-                    video.src = proxyUrl;
-                    video.addEventListener('loadedmetadata', function() {
-                        showStatus('Stream loaded successfully! Starting playback...');
-                        video.play().catch(e => {
-                            console.error('Play error:', e);
-                            showStatus('Autoplay blocked - click play button', false);
-                        });
-                    });
-                    
-                    video.addEventListener('error', function(e) {
-                        console.error('Video error:', e);
-                        showStatus('Video playback error', true);
-                    });
-                } else {
-                    showStatus('Your browser does not support HLS streaming', true);
-                }
-                
-            } catch (error) {
-                console.error('Streaming error:', error);
-                showStatus('Failed to start stream: ' + error.message, true);
-            }
-        }
-
-        // Decrypt link function (communicates with backend)
-        async function decryptLink(encryptedLink) {
-            try {
-                const response = await fetch('/api/decrypt', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        encrypted_link: encryptedLink,
-                        quality: currentQuality
-                    })
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error || 'Decryption failed');
-                }
-
-                const data = await response.json();
-                return data.decrypted_link;
-            } catch (error) {
-                console.error('Decryption error:', error);
-                throw error;
-            }
-        }
-
-        // Admin panel toggle
-        function toggleAdmin() {
-            const adminContent = document.getElementById('adminContent');
-            adminContent.classList.toggle('active');
-        }
-
-        // Encrypt link function (for admin)
-        async function encryptLink() {
-            const originalLink = document.getElementById('originalLink').value.trim();
-            
-            if (!originalLink) {
-                alert('Please enter an original M3U8 link');
-                return;
-            }
-
-            try {
-                const response = await fetch('/api/encrypt', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        original_link: originalLink
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error('Encryption failed');
-                }
-
-                const data = await response.json();
-                
-                // Display encrypted result
-                const resultDiv = document.getElementById('encryptedResult');
-                resultDiv.innerHTML = `
-                    <div class="encrypted-link">
-                        <strong>Encrypted Link:</strong><br>
-                        ${data.encrypted_link}
-                    </div>
-                `;
-                
-            } catch (error) {
-                console.error('Encryption error:', error);
-                alert('Failed to encrypt link: ' + error.message);
-            }
-        }
-
-        // Handle Enter key in input fields
-        document.getElementById('streamLink').addEventListener('keyup', function(event) {
-            if (event.key === 'Enter') {
-                startStream();
-            }
-        });
-
-        document.getElementById('originalLink').addEventListener('keyup', function(event) {
-            if (event.key === 'Enter') {
-                encryptLink();
-            }
-        });
-
-        // Auto-test connection on page load
-        window.addEventListener('load', function() {
-            fetch('/api/health')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'healthy') {
-                        showStatus('✅ Backend connection established');
-                    }
-                })
-                .catch(() => {
-                    showStatus('❌ Backend connection failed', true);
-                });
-        });
-    </script>
-</body>
-</html>"""
-    
-    with open('sreaty_tv.html', 'w', encoding='utf-8') as f:
-        f.write(html_content)
-    
-    print("🚀 Starting Sreaty TV Server with Fixed Proxy Support...")
-    print("📺 Main site: http://localhost:5000")
-    print("🔐 Admin panel: http://localhost:5000/admin")
-    print("📡 API endpoints: /api/encrypt, /api/decrypt")
-    print("🌐 Proxy endpoint: /proxy?url=<encoded_url>")
+    logger.info("🚀 Starting Sreaty TV Debug Server...")
+    logger.info(f"📺 Debug page: http://localhost:{port}")
+    logger.info(f"🔍 Environment variables:")
+    logger.info(f"   PORT: {os.environ.get('PORT', 'Not set')}")
+    logger.info(f"   RAILWAY_PORT: {os.environ.get('RAILWAY_PORT', 'Not set')}")
+    logger.info(f"   RAILWAY_PUBLIC_DOMAIN: {os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'Not set')}")
     
     app.run(debug=False, host='0.0.0.0', port=port)
