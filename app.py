@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template_string, send_from_directory
+from flask import Flask, request, jsonify, render_template_string, send_from_directory, Response
 from flask_cors import CORS
 import base64
 import hashlib
@@ -10,9 +10,15 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import secrets
 import logging
 from datetime import datetime, timedelta
+import requests
+import re
+from urllib.parse import urljoin, urlparse
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={
+    r"/api/*": {"origins": "*"},
+    r"/proxy/*": {"origins": "*"}
+})
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -122,6 +128,48 @@ def rate_limit_check(ip: str, limit: int = 10, window: int = 60) -> bool:
     request_cache[ip].append(now)
     return True
 
+def fetch_with_headers(url: str, headers: dict = None) -> requests.Response:
+    """Fetch URL with proper headers and error handling"""
+    if headers is None:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive'
+        }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=30, verify=True)
+        response.raise_for_status()
+        return response
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch {url}: {str(e)}")
+        raise
+
+def process_m3u8_content(content: str, base_url: str, proxy_base: str) -> str:
+    """Process M3U8 content and rewrite URLs to use proxy"""
+    lines = content.strip().split('\n')
+    processed_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            # This is a URL line
+            if not line.startswith('http'):
+                # Relative URL, make it absolute
+                absolute_url = urljoin(base_url, line)
+            else:
+                absolute_url = line
+            
+            # Rewrite URL to use our proxy
+            encoded_url = base64.urlsafe_b64encode(absolute_url.encode()).decode()
+            proxy_url = f"{proxy_base}/segment/{encoded_url}"
+            processed_lines.append(proxy_url)
+        else:
+            processed_lines.append(line)
+    
+    return '\n'.join(processed_lines)
+
 @app.route('/')
 def index():
     """Serve the main HTML page"""
@@ -170,7 +218,7 @@ def encrypt_link():
 
 @app.route('/api/decrypt', methods=['POST'])
 def decrypt_link():
-    """Decrypt M3U8 links for streaming"""
+    """Decrypt M3U8 links and return proxy URL"""
     try:
         # Rate limiting
         client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
@@ -186,13 +234,18 @@ def decrypt_link():
         quality = data.get('quality', 'auto')
         
         # Decrypt the link
-        decrypted_link = encryption_handler.decrypt_link(encrypted_link)
+        original_link = encryption_handler.decrypt_link(encrypted_link)
+        
+        # Return proxy URL instead of original link
+        proxy_base = request.url_root.rstrip('/')
+        encoded_link = base64.urlsafe_b64encode(original_link.encode()).decode()
+        proxy_url = f"{proxy_base}/proxy/m3u8/{encoded_link}"
         
         logger.info(f"Link decrypted for IP: {client_ip}, Quality: {quality}")
         
         return jsonify({
             'success': True,
-            'decrypted_link': decrypted_link,
+            'decrypted_link': proxy_url,
             'quality': quality
         })
         
@@ -201,6 +254,85 @@ def decrypt_link():
     except Exception as e:
         logger.error(f"Decryption API error: {str(e)}")
         return jsonify({'error': 'Decryption failed'}), 500
+
+@app.route('/proxy/m3u8/<encoded_url>')
+def proxy_m3u8(encoded_url):
+    """Proxy M3U8 files and rewrite URLs"""
+    try:
+        # Decode the URL
+        original_url = base64.urlsafe_b64decode(encoded_url.encode()).decode()
+        
+        # Fetch the M3U8 file
+        response = fetch_with_headers(original_url)
+        
+        # Process the content to rewrite URLs
+        base_url = original_url.rsplit('/', 1)[0] + '/'
+        proxy_base = request.url_root.rstrip('/')
+        
+        processed_content = process_m3u8_content(
+            response.text, 
+            base_url, 
+            f"{proxy_base}/proxy"
+        )
+        
+        # Create response with proper headers
+        response_obj = Response(
+            processed_content,
+            mimetype='application/vnd.apple.mpegurl',
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Range',
+                'Access-Control-Expose-Headers': 'Content-Length, Content-Range',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            }
+        )
+        
+        return response_obj
+        
+    except Exception as e:
+        logger.error(f"M3U8 proxy error: {str(e)}")
+        return jsonify({'error': 'Failed to proxy M3U8 file'}), 500
+
+@app.route('/proxy/segment/<encoded_url>')
+def proxy_segment(encoded_url):
+    """Proxy video segments (TS files)"""
+    try:
+        # Decode the URL
+        original_url = base64.urlsafe_b64decode(encoded_url.encode()).decode()
+        
+        # Fetch the segment
+        response = fetch_with_headers(original_url)
+        
+        # Determine content type based on file extension
+        if original_url.endswith('.ts'):
+            content_type = 'video/mp2t'
+        elif original_url.endswith('.m4s'):
+            content_type = 'video/mp4'
+        else:
+            content_type = 'application/octet-stream'
+        
+        # Create response with proper headers
+        response_obj = Response(
+            response.content,
+            mimetype=content_type,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Range',
+                'Access-Control-Expose-Headers': 'Content-Length, Content-Range',
+                'Cache-Control': 'public, max-age=3600',
+                'Accept-Ranges': 'bytes'
+            }
+        )
+        
+        return response_obj
+        
+    except Exception as e:
+        logger.error(f"Segment proxy error: {str(e)}")
+        return jsonify({'error': 'Failed to proxy segment'}), 500
 
 @app.route('/api/health')
 def health_check():
@@ -324,6 +456,16 @@ def admin_panel():
     """
     return admin_html
 
+# CORS preflight handler
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = Response()
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add('Access-Control-Allow-Headers', "*")
+        response.headers.add('Access-Control-Allow-Methods', "*")
+        return response
+
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({'error': 'Endpoint not found'}), 404
@@ -331,7 +473,9 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
+
 port = int(os.environ.get('PORT', 5000))
+
 if __name__ == '__main__':
     # Create HTML file for serving
     html_content = """<!DOCTYPE html>
@@ -557,6 +701,25 @@ if __name__ == '__main__':
             font-family: monospace;
         }
 
+        .status-indicator {
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .status-success {
+            background: rgba(40, 167, 69, 0.2);
+            border: 1px solid #28a745;
+            color: #d4edda;
+        }
+
+        .status-error {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid #dc3545;
+            color: #f8d7da;
+        }
+
         @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
@@ -576,7 +739,7 @@ if __name__ == '__main__':
     <div class="container">
         <div class="header">
             <div class="logo">SREATY TV</div>
-            <div class="tagline">By: Mohamed Alsariti</div>
+            <div class="tagline">Professional Live Streaming Platform</div>
         </div>
 
         <div class="main-content">
@@ -600,6 +763,8 @@ if __name__ == '__main__':
                 <button class="stream-btn" onclick="startStream()">
                     🎬 Start Streaming
                 </button>
+
+                <div id="statusIndicator"></div>
             </div>
 
             <div class="video-container">
@@ -612,12 +777,40 @@ if __name__ == '__main__':
             </div>
         </div>
 
+        <div class="admin-panel">
+            <div class="admin-header">
+                <h3 style="margin-right: 20px;">Admin Panel</h3>
+                <button class="admin-toggle" onclick="toggleAdmin()">Show/Hide</button>
+            </div>
+            <div class="admin-content" id="adminContent">
+                <div class="form-group">
+                    <label for="originalLink">Original M3U8 Link</label>
+                    <input type="text" id="originalLink" class="form-control" placeholder="Enter original M3U8 link...">
+                </div>
+                <button class="stream-btn" onclick="encryptLink()">
+                    🔐 Encrypt Link
+                </button>
+                <div id="encryptedResult"></div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.10/hls.min.js"></script>
     <script>
         let currentQuality = 'auto';
         let hls = null;
+
+        function showStatus(message, isError = false) {
+            const statusDiv = document.getElementById('statusIndicator');
+            statusDiv.innerHTML = `<div class="status-indicator ${isError ? 'status-error' : 'status-success'}">${message}</div>`;
+            
+            // Auto-hide success messages after 5 seconds
+            if (!isError) {
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+            }
+        }
 
         // Quality selector functionality
         document.querySelectorAll('.quality-btn').forEach(btn => {
@@ -633,16 +826,18 @@ if __name__ == '__main__':
             const streamLink = document.getElementById('streamLink').value.trim();
             
             if (!streamLink) {
-                alert('Please enter a stream link');
+                showStatus('Please enter a stream link', true);
                 return;
             }
 
+            showStatus('Decrypting and loading stream...');
+
             try {
                 // Decrypt the link first
-                const decryptedLink = await decryptLink(streamLink);
+                const proxyUrl = await decryptLink(streamLink);
                 
-                if (!decryptedLink) {
-                    alert('Invalid or corrupted stream link');
+                if (!proxyUrl) {
+                    showStatus('Invalid or corrupted stream link', true);
                     return;
                 }
 
@@ -662,34 +857,52 @@ if __name__ == '__main__':
                     hls = new Hls({
                         enableWorker: true,
                         lowLatencyMode: true,
-                        backBufferLength: 90
+                        backBufferLength: 90,
+                        maxLoadingDelay: 4,
+                        maxBufferLength: 30,
+                        maxBufferSize: 60 * 1000 * 1000,
+                        maxBufferHole: 0.5
                     });
                     
-                    hls.loadSource(decryptedLink);
+                    hls.loadSource(proxyUrl);
                     hls.attachMedia(video);
                     
                     hls.on(Hls.Events.MANIFEST_PARSED, function() {
                         console.log('Stream loaded successfully');
+                        showStatus('Stream loaded successfully! Starting playback...');
                         video.play();
                     });
 
                     hls.on(Hls.Events.ERROR, function(event, data) {
                         console.error('HLS Error:', data);
-                        alert('Error loading stream: ' + data.details);
+                        if (data.fatal) {
+                            switch(data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    showStatus('Network error: ' + data.details, true);
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    showStatus('Media error: ' + data.details, true);
+                                    break;
+                                default:
+                                    showStatus('Fatal error: ' + data.details, true);
+                                    break;
+                            }
+                        }
                     });
                     
                 } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                    video.src = decryptedLink;
+                    video.src = proxyUrl;
                     video.addEventListener('loadedmetadata', function() {
+                        showStatus('Stream loaded successfully! Starting playback...');
                         video.play();
                     });
                 } else {
-                    alert('Your browser does not support HLS streaming');
+                    showStatus('Your browser does not support HLS streaming', true);
                 }
                 
             } catch (error) {
                 console.error('Streaming error:', error);
-                alert('Failed to start stream: ' + error.message);
+                showStatus('Failed to start stream: ' + error.message, true);
             }
         }
 
@@ -778,6 +991,20 @@ if __name__ == '__main__':
                 encryptLink();
             }
         });
+
+        // Auto-test connection on page load
+        window.addEventListener('load', function() {
+            fetch('/api/health')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'healthy') {
+                        showStatus('✅ Backend connection established');
+                    }
+                })
+                .catch(() => {
+                    showStatus('❌ Backend connection failed', true);
+                });
+        });
     </script>
 </body>
 </html>"""
@@ -785,9 +1012,10 @@ if __name__ == '__main__':
     with open('sreaty_tv.html', 'w', encoding='utf-8') as f:
         f.write(html_content)
     
-    print("🚀 Starting Sreaty TV Server...")
+    print("🚀 Starting Sreaty TV Server with Proxy Support...")
     print("📺 Main site: http://localhost:5000")
     print("🔐 Admin panel: http://localhost:5000/admin")
     print("📡 API endpoints: /api/encrypt, /api/decrypt")
+    print("🌐 Proxy endpoints: /proxy/m3u8/<url>, /proxy/segment/<url>")
     
     app.run(debug=False, host='0.0.0.0', port=port)
