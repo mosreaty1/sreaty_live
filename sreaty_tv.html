@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sreaty TV - Live Streaming</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 20px 0;
+        }
+
+        .logo {
+            font-size: 3rem;
+            font-weight: bold;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+
+        .tagline {
+            font-size: 1.2rem;
+            opacity: 0.8;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .controls-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .video-container {
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            min-height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #fff;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 16px;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.3s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            background: rgba(255, 255, 255, 0.2);
+            border-color: #4ecdc4;
+            box-shadow: 0 0 20px rgba(78, 205, 196, 0.3);
+        }
+
+        .form-control::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .quality-selector {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .quality-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .quality-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .quality-btn.active {
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+            box-shadow: 0 5px 15px rgba(78, 205, 196, 0.4);
+        }
+
+        .stream-btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+            color: #fff;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 20px;
+        }
+
+        .stream-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(78, 205, 196, 0.4);
+        }
+
+        .stream-btn:active {
+            transform: translateY(-1px);
+        }
+
+        #videoPlayer {
+            width: 100%;
+            height: 100%;
+            border-radius: 15px;
+            background: #000;
+        }
+
+        .video-placeholder {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .video-placeholder i {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            display: block;
+        }
+
+        .admin-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            margin-top: 30px;
+        }
+
+        .admin-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .admin-toggle {
+            background: none;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .admin-toggle:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .admin-content {
+            display: none;
+        }
+
+        .admin-content.active {
+            display: block;
+        }
+
+        .encrypted-link {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 15px;
+            word-break: break-all;
+            font-family: monospace;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .logo {
+                font-size: 2rem;
+            }
+            
+            .quality-selector {
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">SREATY TV</div>
+            <div class="tagline">Professional Live Streaming Platform</div>
+        </div>
+
+        <div class="main-content">
+            <div class="controls-panel">
+                <div class="form-group">
+                    <label for="streamLink">Stream Link (M3U8)</label>
+                    <input type="text" id="streamLink" class="form-control" placeholder="Enter encrypted stream link...">
+                </div>
+
+                <div class="form-group">
+                    <label>Quality Settings</label>
+                    <div class="quality-selector">
+                        <button class="quality-btn active" data-quality="auto">Auto</button>
+                        <button class="quality-btn" data-quality="1080p">1080p</button>
+                        <button class="quality-btn" data-quality="720p">720p</button>
+                        <button class="quality-btn" data-quality="480p">480p</button>
+                        <button class="quality-btn" data-quality="360p">360p</button>
+                    </div>
+                </div>
+
+                <button class="stream-btn" onclick="startStream()">
+                    🎬 Start Streaming
+                </button>
+            </div>
+
+            <div class="video-container">
+                <div class="video-placeholder" id="placeholder">
+                    <span style="font-size: 4rem;">📺</span>
+                    <h3>Ready to Stream</h3>
+                    <p>Enter your encrypted link and click start streaming</p>
+                </div>
+                <video id="videoPlayer" controls style="display: none;"></video>
+            </div>
+        </div>
+
+      
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.10/hls.min.js"></script>
+    <script>
+        let currentQuality = 'auto';
+        let hls = null;
+
+        // Quality selector functionality
+        document.querySelectorAll('.quality-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.quality-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentQuality = this.dataset.quality;
+            });
+        });
+
+        // Start streaming function
+        async function startStream() {
+            const streamLink = document.getElementById('streamLink').value.trim();
+            
+            if (!streamLink) {
+                alert('Please enter a stream link');
+                return;
+            }
+
+            try {
+                // Decrypt the link first
+                const decryptedLink = await decryptLink(streamLink);
+                
+                if (!decryptedLink) {
+                    alert('Invalid or corrupted stream link');
+                    return;
+                }
+
+                const video = document.getElementById('videoPlayer');
+                const placeholder = document.getElementById('placeholder');
+                
+                // Show video player
+                placeholder.style.display = 'none';
+                video.style.display = 'block';
+
+                // Initialize HLS player
+                if (Hls.isSupported()) {
+                    if (hls) {
+                        hls.destroy();
+                    }
+                    
+                    hls = new Hls({
+                        enableWorker: true,
+                        lowLatencyMode: true,
+                        backBufferLength: 90
+                    });
+                    
+                    hls.loadSource(decryptedLink);
+                    hls.attachMedia(video);
+                    
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        console.log('Stream loaded successfully');
+                        video.play();
+                    });
+
+                    hls.on(Hls.Events.ERROR, function(event, data) {
+                        console.error('HLS Error:', data);
+                        alert('Error loading stream: ' + data.details);
+                    });
+                    
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = decryptedLink;
+                    video.addEventListener('loadedmetadata', function() {
+                        video.play();
+                    });
+                } else {
+                    alert('Your browser does not support HLS streaming');
+                }
+                
+            } catch (error) {
+                console.error('Streaming error:', error);
+                alert('Failed to start stream: ' + error.message);
+            }
+        }
+
+        // Decrypt link function (communicates with backend)
+        async function decryptLink(encryptedLink) {
+            try {
+                const response = await fetch('/api/decrypt', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        encrypted_link: encryptedLink,
+                        quality: currentQuality
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Decryption failed');
+                }
+
+                const data = await response.json();
+                return data.decrypted_link;
+            } catch (error) {
+                console.error('Decryption error:', error);
+                return null;
+            }
+        }
+
+        // Admin panel toggle
+        function toggleAdmin() {
+            const adminContent = document.getElementById('adminContent');
+            adminContent.classList.toggle('active');
+        }
+
+        // Encrypt link function (for admin)
+        async function encryptLink() {
+            const originalLink = document.getElementById('originalLink').value.trim();
+            
+            if (!originalLink) {
+                alert('Please enter an original M3U8 link');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/encrypt', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        original_link: originalLink
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Encryption failed');
+                }
+
+                const data = await response.json();
+                
+                // Display encrypted result
+                const resultDiv = document.getElementById('encryptedResult');
+                resultDiv.innerHTML = `
+                    <div class="encrypted-link">
+                        <strong>Encrypted Link:</strong><br>
+                        ${data.encrypted_link}
+                    </div>
+                `;
+                
+            } catch (error) {
+                console.error('Encryption error:', error);
+                alert('Failed to encrypt link: ' + error.message);
+            }
+        }
+
+        // Handle Enter key in input fields
+        document.getElementById('streamLink').addEventListener('keyup', function(event) {
+            if (event.key === 'Enter') {
+                startStream();
+            }
+        });
+
+        document.getElementById('originalLink').addEventListener('keyup', function(event) {
+            if (event.key === 'Enter') {
+                encryptLink();
+            }
+        });
+    </script>
+</body>
+</html>
