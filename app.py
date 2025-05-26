@@ -576,7 +576,7 @@ if __name__ == '__main__':
     <div class="container">
         <div class="header">
             <div class="logo">SREATY TV</div>
-            <div class="tagline">Professional Live Streaming Platform</div>
+            <div class="tagline">By: Mohamed Alsariti</div>
         </div>
 
         <div class="main-content">
@@ -612,22 +612,6 @@ if __name__ == '__main__':
             </div>
         </div>
 
-        <div class="admin-panel">
-            <div class="admin-header">
-                <h3 style="margin-right: 20px;">Admin Panel</h3>
-                <button class="admin-toggle" onclick="toggleAdmin()">Show/Hide</button>
-            </div>
-            <div class="admin-content" id="adminContent">
-                <div class="form-group">
-                    <label for="originalLink">Original M3U8 Link</label>
-                    <input type="text" id="originalLink" class="form-control" placeholder="Enter original M3U8 link...">
-                </div>
-                <button class="stream-btn" onclick="encryptLink()">
-                    🔐 Encrypt Link
-                </button>
-                <div id="encryptedResult"></div>
-            </div>
-        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.10/hls.min.js"></script>
